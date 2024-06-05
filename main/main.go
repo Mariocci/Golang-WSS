@@ -1,45 +1,249 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/net/websocket"
+	"io"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"time"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins
-	},
+type User struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
-func wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		fmt.Println("Error upgrading to WebSocket:", err)
-		return
-	}
-	defer conn.Close()
-
-	// Echo messages back to the client
-	for {
-		messageType, p, err := conn.ReadMessage()
-		if err != nil {
-			fmt.Println("Error reading message:", err)
-			return
-		}
-		if err := conn.WriteMessage(messageType, p); err != nil {
-			fmt.Println("Error writing message:", err)
-			return
-		}
-	}
+type Token struct {
+	Username string `json:"username"`
+	Expires  int64  `json:"expires"`
 }
+
+var AESKey = []byte("3d308f8e8b228b72ab8f42b6653cc128")
+var credentialsFile = "credentials.txt"
 
 func main() {
-	http.HandleFunc("/ws", wsHandler)
-	fmt.Println("Server is running on https://localhost:8080")
-	err := http.ListenAndServeTLS(":8080", "server.crt", "server.key", nil)
+	http.Handle("/ws", websocket.Handler(wsHandler))
+	http.HandleFunc("/login", loginHandler)
+	http.HandleFunc("/register", registerHandler)
+	http.HandleFunc("/endpoint1", authMiddleware(endpoint1Handler))
+	http.HandleFunc("/endpoint2", authMiddleware(endpoint2Handler))
+	http.HandleFunc("/endpoint3", authMiddleware(endpoint3Handler))
+
+	fmt.Println("Server started at :8080")
+	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
-		fmt.Println("Error starting server:", err)
+		return
 	}
+}
+
+func registerHandler(writer http.ResponseWriter, request *http.Request) {
+	var newUser User
+	err := json.NewDecoder(request.Body).Decode(&newUser)
+	if err != nil {
+		http.Error(writer, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if newUser.Username == "" || newUser.Password == "" {
+		http.Error(writer, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newUser.Password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(writer, "Error hashing password", http.StatusInternalServerError)
+		return
+	}
+
+	newUser.Password = string(hashedPassword)
+
+	credentials, err := readCredentials()
+	if err != nil && !isNotExist(err) {
+		http.Error(writer, "Error reading credentials", http.StatusInternalServerError)
+		return
+	}
+
+	credentials = append(credentials, newUser)
+
+	err = writeCredentials(credentials)
+	if err != nil {
+		http.Error(writer, "Error storing credentials", http.StatusInternalServerError)
+		return
+	}
+	writer.WriteHeader(http.StatusCreated)
+}
+
+func readCredentials() ([]User, error) {
+	var credentials []User
+	data, err := ioutil.ReadFile(credentialsFile)
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(data, &credentials)
+	if err != nil {
+		return nil, err
+	}
+	return credentials, nil
+}
+
+func writeCredentials(credentials []User) error {
+	data, err := json.Marshal(credentials)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(credentialsFile, data, 0644)
+}
+
+func isNotExist(err error) bool {
+	if pathErr, ok := err.(*os.PathError); ok && os.IsNotExist(pathErr) {
+		return true
+	}
+	return false
+}
+func wsHandler(ws *websocket.Conn) {
+	query := ws.Request().URL.Query()
+	tokenString := query.Get("token")
+	if tokenString == "" {
+		err := ws.Close()
+		if err != nil {
+			return
+		}
+		return
+	}
+
+	// Decrypt and validate the token
+	tokenData := decryptAES(tokenString)
+	var token Token
+	err := json.Unmarshal([]byte(tokenData), &token)
+	if err != nil || token.Expires < time.Now().Unix() {
+		ws.Close()
+		return
+	}
+
+	// WebSocket communication logic
+	var msg string
+	for {
+		err := websocket.Message.Receive(ws, &msg)
+		if err != nil {
+			fmt.Println("WebSocket error:", err)
+			break
+		}
+		fmt.Println("Received message:", msg)
+		response := fmt.Sprintf("Message received: %s", msg)
+		err = websocket.Message.Send(ws, response)
+		if err != nil {
+			fmt.Println("WebSocket send error:", err)
+			break
+		}
+	}
+}
+
+func endpoint1Handler(writer http.ResponseWriter, request *http.Request) {
+	_, err := writer.Write([]byte("endpoint 1"))
+	if err != nil {
+		return
+	}
+}
+
+func endpoint2Handler(writer http.ResponseWriter, request *http.Request) {
+	_, err := writer.Write([]byte("endpoint 2"))
+	if err != nil {
+		return
+	}
+}
+
+func endpoint3Handler(writer http.ResponseWriter, request *http.Request) {
+	_, err := writer.Write([]byte("endpoint 3"))
+	if err != nil {
+		return
+	}
+}
+
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		tokenString := decryptAES(authHeader)
+		var token Token
+		err := json.Unmarshal([]byte(tokenString), &token)
+		if err != nil || token.Expires < time.Now().Unix() {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func loginHandler(writer http.ResponseWriter, request *http.Request) {
+	var user User
+	err := json.NewDecoder(request.Body).Decode(&user)
+	if err != nil {
+		http.Error(writer, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	credentials, err := readCredentials()
+	if err != nil {
+		http.Error(writer, "Error reading credentials", http.StatusInternalServerError)
+		return
+	}
+
+	var storedUser *User
+	for _, u := range credentials {
+		if u.Username == user.Username {
+			storedUser = &u
+			break
+		}
+	}
+
+	if storedUser == nil {
+		http.Error(writer, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(storedUser.Password), []byte(user.Password))
+	if err != nil {
+		http.Error(writer, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	token := Token{
+		Username: user.Username,
+		Expires:  time.Now().Add(24 * time.Hour).Unix(),
+	}
+	tokenString, _ := json.Marshal(token)
+	encryptedToken := encryptAES(string(tokenString))
+	writer.Write([]byte(encryptedToken))
+}
+
+func encryptAES(plaintext string) string {
+	block, _ := aes.NewCipher(AESKey)
+	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
+	iv := ciphertext[:aes.BlockSize]
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		panic(err)
+	}
+	stream := cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(ciphertext[aes.BlockSize:], []byte(plaintext))
+	return base64.URLEncoding.EncodeToString(ciphertext)
+}
+
+func decryptAES(ciphertext string) string {
+	block, _ := aes.NewCipher(AESKey)
+	decodedCiphertext, _ := base64.URLEncoding.DecodeString(ciphertext)
+	iv := decodedCiphertext[:aes.BlockSize]
+	decodedCiphertext = decodedCiphertext[aes.BlockSize:]
+	stream := cipher.NewCFBDecrypter(block, iv)
+	stream.XORKeyStream(decodedCiphertext, decodedCiphertext)
+	return string(decodedCiphertext)
 }
