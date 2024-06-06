@@ -40,11 +40,13 @@ func main() {
 	fmt.Println("Server started at :8080")
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
+		fmt.Println("Error starting server:", err)
 		return
 	}
 }
 
 func registerHandler(writer http.ResponseWriter, request *http.Request) {
+	fmt.Println("Register handler called")
 	var newUser User
 	err := json.NewDecoder(request.Body).Decode(&newUser)
 	if err != nil {
@@ -107,27 +109,28 @@ func isNotExist(err error) bool {
 	}
 	return false
 }
+
 func wsHandler(ws *websocket.Conn) {
-	query := ws.Request().URL.Query()
-	tokenString := query.Get("token")
+	defer ws.Close()
+
+	fmt.Println("WebSocket handler called")
+	tokenString := ws.Request().URL.Query().Get("token")
+
 	if tokenString == "" {
-		err := ws.Close()
-		if err != nil {
-			return
-		}
+		fmt.Println("No token provided")
+		websocket.Message.Send(ws, "Unauthorized")
 		return
 	}
 
-	// Decrypt and validate the token
 	tokenData := decryptAES(tokenString)
+
 	var token Token
 	err := json.Unmarshal([]byte(tokenData), &token)
 	if err != nil || token.Expires < time.Now().Unix() {
-		ws.Close()
+		websocket.Message.Send(ws, "Unauthorized")
 		return
 	}
 
-	// WebSocket communication logic
 	var msg string
 	for {
 		err := websocket.Message.Receive(ws, &msg)
@@ -146,6 +149,7 @@ func wsHandler(ws *websocket.Conn) {
 }
 
 func endpoint1Handler(writer http.ResponseWriter, request *http.Request) {
+	fmt.Println("Endpoint 1 handler called")
 	_, err := writer.Write([]byte("endpoint 1"))
 	if err != nil {
 		return
@@ -153,6 +157,7 @@ func endpoint1Handler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func endpoint2Handler(writer http.ResponseWriter, request *http.Request) {
+	fmt.Println("Endpoint 2 handler called")
 	_, err := writer.Write([]byte("endpoint 2"))
 	if err != nil {
 		return
@@ -160,6 +165,7 @@ func endpoint2Handler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func endpoint3Handler(writer http.ResponseWriter, request *http.Request) {
+	fmt.Println("Endpoint 3 handler called")
 	_, err := writer.Write([]byte("endpoint 3"))
 	if err != nil {
 		return
@@ -168,6 +174,7 @@ func endpoint3Handler(writer http.ResponseWriter, request *http.Request) {
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("Auth middleware called")
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -185,6 +192,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func loginHandler(writer http.ResponseWriter, request *http.Request) {
+	fmt.Println("Login handler called")
 	var user User
 	err := json.NewDecoder(request.Body).Decode(&user)
 	if err != nil {
