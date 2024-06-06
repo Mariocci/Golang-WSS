@@ -16,14 +16,14 @@ import (
 	"time"
 )
 
-type User struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
 type Token struct {
 	Username string `json:"username"`
 	Expires  int64  `json:"expires"`
+}
+
+type User struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 var AESKey = []byte("3d308f8e8b228b72ab8f42b6653cc128")
