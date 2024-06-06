@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -67,7 +66,7 @@ func registerHandler(writer http.ResponseWriter, request *http.Request) {
 	newUser.Password = string(hashedPassword)
 
 	credentials, err := readCredentials()
-	if err != nil && !isNotExist(err) {
+	if err != nil {
 		http.Error(writer, "Error reading credentials", http.StatusInternalServerError)
 		return
 	}
@@ -101,13 +100,6 @@ func writeCredentials(credentials []User) error {
 		return err
 	}
 	return ioutil.WriteFile(credentialsFile, data, 0644)
-}
-
-func isNotExist(err error) bool {
-	if pathErr, ok := err.(*os.PathError); ok && os.IsNotExist(pathErr) {
-		return true
-	}
-	return false
 }
 
 func wsHandler(ws *websocket.Conn) {
