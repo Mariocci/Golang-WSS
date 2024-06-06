@@ -9,7 +9,6 @@ This is a simple WebSocket server implemented in Go (Golang).
 - [Installation](#installation)
 - [Usage](#usage)
 - [Endpoints](#endpoints)
-- [Contributing](#contributing)
 - [License](#license)
 
 ## Introduction
@@ -48,17 +47,6 @@ Once the server is running, you can interact with it using WebSocket clients or 
 - `/login`: POST request to login as an existing user and receive a JWT token.
 - `/ws`: WebSocket endpoint for establishing WebSocket connections.
 - `/endpoint1`, `/endpoint2`, `/endpoint3`: Example HTTP endpoints protected by JWT authorization middleware.
-
-## Contributing
-
-Contributions are welcome! If you'd like to contribute to this project, please follow these guidelines:
-
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature`)
-3. Make your changes.
-4. Commit your changes (`git commit -am 'Add new feature'`)
-5. Push to the branch (`git push origin feature`)
-6. Create a new Pull Request.
 
 ## License
 
